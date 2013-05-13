@@ -13,6 +13,14 @@ import (
 
 type JobStatus byte
 
+type JobError struct {
+	Err error
+}
+
+func (err *JobError) Error() string {
+	return err.Err.Error()
+}
+
 const (
 	creating = 0
 	ready = 1
@@ -60,17 +68,11 @@ func (j *Job) Data() ([]byte, error) {
 }
 
 func (j *Job) AddResult(r string, cnt []byte) error {
-	if (j.status != processing && j.status != terminating) {
+	if (j.status != terminating) {
 		return fmt.Errorf("Job should be in state 'processing' or 'terminating'\n")
 	}
-	if (j.status == processing) {
-		if err := ioutil.WriteFile(j.root + "/status", []byte{terminating}, 0600); err != nil {
-			return err
-		}
-		j.status = terminating
-	}
 	if _,err := os.Stat(j.root + "/results/" + r); err != nil	{
-		return fmt.Errorf("Id '%s' already used", r);
+		return fmt.Errorf("Id '%s' already used", r)
 	}
 	return ioutil.WriteFile(j.root + "/results/" + r, cnt, 0600)
 }
@@ -83,23 +85,25 @@ func NewJob(root string, id string, data []byte) (*Job, error){
 	if err = os.MkdirAll(root + "/results", 0700); err != nil {
 		return nil, err
 	}
-	if err = ioutil.WriteFile(root + "/status", []byte{creating}, 0600); err != nil {
+	j := &Job{root, 0, make([]string, 0), id}
+
+	if err = j.setStatus(creating); err != nil {
 		return nil, err
 	}
 	if err = ioutil.WriteFile(root + "/data", data, 0600); err != nil {
 		return nil, err
 	}
 
-	if err = ioutil.WriteFile(root + "/status", []byte{ready}, 0600); err != nil {
+	if err = j.setStatus(ready); err != nil {
 		return nil, err
 	}
-	return &Job{root, 1, make([]string, 0), id}, err
+	return j, err
 }
 
 func ResumeJob(root string, id string) (*Job, error){
 	stat, _:= os.Stat(root);
 	if (!stat.IsDir()) {
-		return nil, fmt.Errorf("directory '%s' does not exist %b\n ", root)
+		return nil, fmt.Errorf("directory '%s' does not exist\n ", root)
 	}
 
 	status, err := ioutil.ReadFile(root + "/status")
@@ -118,30 +122,37 @@ func ResumeJob(root string, id string) (*Job, error){
 		}
 	}
 
-	if err = ioutil.WriteFile(root + "/status", []byte{ready}, 0600); err != nil {
+	j := &Job{root, JobStatus(status[0]), results, id}
+	if err = j.setStatus(ready); err != nil {
 		return nil, err
 	}
-	return &Job{root, JobStatus(status[0]), results, id}, nil
+	return j, nil
 }
 
 func (j *Job) Process() error {
-	if (j.status != ready) {
-		return fmt.Errorf("Job should be in state %s. Currently in state %s\n", ready, j.status)
-	}
-	if err := ioutil.WriteFile(j.root + "/status", []byte{processing}, 0600); err != nil {
-		return err
-	}
-	j.status = processing
-	return nil
+	return j.switchStatus(ready, processing)
+}
+
+func (j *Job) Terminating() error {
+	return j.switchStatus(processing, terminating)
 }
 
 func (j *Job) Terminated() error {
-	if (j.status != processing && j.status != terminating) {
-		return fmt.Errorf("Job should be in state 'processing' or 'terminating'\n")
+	return j.switchStatus(terminating, terminated)
+}
+
+func (j *Job) switchStatus(from, to JobStatus) error {
+	if (j.status != from) {
+		return fmt.Errorf("Expect status '%s'. Got '%s'\n", from.String(), to.String())
 	}
-	if err := ioutil.WriteFile(j.root + "/status", []byte{terminated}, 0600); err != nil {
+	return j.setStatus(to)
+}
+
+func (j *Job) setStatus(to JobStatus) error {
+	if err := ioutil.WriteFile(j.root + "/status", []byte{byte(to)}, 0600); err != nil {
 		return err
 	}
+	j.status = to
 	return nil
 }
 

@@ -8,7 +8,6 @@ package bip
 import (
 	"os"
 	"io/ioutil"
-	"fmt"
 )
 
 type Index struct {
@@ -54,7 +53,6 @@ func (idx * Index) ListJobs() []string {
 
 func (idx * Index) GetJob(id string) (*Job, bool) {
 	j, ok := idx.jobs[id]
-	fmt.Printf("Return %s\n", j.String())
 	return j, ok
 }
 
