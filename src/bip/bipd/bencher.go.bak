@@ -1,0 +1,160 @@
+package main
+
+import (
+	"bip"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"strings"
+)
+
+type JobsDB struct {
+	Root   string
+	JobsDB map[string]bip.Job
+}
+
+func NewJobsDB(root string) (*JobsDB, error) {
+	_, err := os.Stat(root)
+	db := JobsDB{Root: root, JobsDB: make(map[string]bip.Job)}
+	if err != nil {
+		//Refresh
+		infos, err := ioutil.ReadDir(root)
+		if err != nil {
+			return nil, err
+		} else {
+			for f := range infos {
+				file := infos[f]
+				if !file.IsDir() && strings.HasSuffix(file.Name(), ".idx") {
+					cnt, err := ioutil.ReadFile(file.Name())
+					var j bip.Job
+					err = json.Unmarshal(cnt, &j)
+					if err != nil {
+						return nil, err
+					}
+					db.JobsDB[j.Id] = j
+				}
+			}
+		}
+	} else {
+		dirs := [...]string{"/indexes", "/workloads", "/statistics", "/results"}
+		for i := range dirs {
+			err := os.MkdirAll(root+dirs[i], 0755)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return &db, nil
+}
+
+func (db JobsDB) MakeJob(id string, workload []byte) error {
+
+	j := bip.Job{
+		Id:         id,
+		Status:     0,
+		Workload:   "/JobsDB/" + id + "/workload",
+		Statistics: "/JobsDB/" + id + "/statistics",
+		Results:    make([]string, 0, 10),
+	}
+
+	err := db.syncJob(j)
+	if err != nil {
+		return err
+	}
+	//Put the workload
+	return ioutil.WriteFile(db.Root+"/workloads/"+id, workload, 0644)
+}
+
+func (db JobsDB) syncJob(j bip.Job) error {
+	db.JobsDB[j.Id] = j
+	jsonJ, err := json.Marshal(j)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(db.Root+"/indexes/"+j.Id, []byte(jsonJ), 0644)
+}
+
+func (db JobsDB) GetJob(id string) (bip.Job, error) {
+	j, ok := db.JobsDB[id]
+	if ok {
+		return j, nil
+	}
+	return bip.Job{}, fmt.Errorf("Unknown job %s", id)
+}
+
+func (db JobsDB) BeginJob(id string) ([]byte, error) {
+
+	j, err := db.GetJob(id)
+	if err != nil {
+		return nil, err
+	}
+	if j.Status != 0 {
+		return nil, fmt.Errorf("Current status of job %s should be 0. Current is %d", id, j.Status)
+	}
+	cnt, err := ioutil.ReadFile(db.Root + "/workloads/" + id)
+	if err != nil {
+		return nil, err
+	}
+	j.Status = 1
+	return cnt, db.syncJob(j)
+}
+
+func (db JobsDB) CommitJob(id string, stats []byte, results map[string][]byte) error {
+	j, _ := db.GetJob(id)
+	if j.Status != 1 {
+		return fmt.Errorf("Current status for job %s should 1. Current is %d", id, j.Status)
+	}
+
+	err := ioutil.WriteFile(db.Root+"/statistics/"+id, stats, 0644)
+	if err != nil {
+		return err
+	}
+	err = os.MkdirAll(db.Root+"/results/"+id, 0755)
+	if err != nil {
+		return err
+	}
+	for k, cnt := range results {
+		err = ioutil.WriteFile(db.Root+"/results/"+id+"/"+k, cnt, 0644)
+		if err != nil {
+			return err
+		}
+	}
+
+	j.Status = 2
+	return db.syncJob(j)
+}
+
+func (db JobsDB) GetResult(id string, res string) ([]byte, error) {
+	return ioutil.ReadFile(db.Root + "/results/" + id + "/" + res)
+}
+
+func (db JobsDB) GetStatistics(id string) ([]byte, error) {
+	return ioutil.ReadFile(db.Root + "/statistics/" + id)
+}
+
+func (db JobsDB) GetWorkload(id string) ([]byte, error) {
+	return ioutil.ReadFile(db.Root + "/workloads/" + id)
+}
+
+func (db JobsDB) GetResults(id string) ([]string, error) {
+	j, err := db.GetJob(id)
+	if err != nil {
+		return nil, err
+	}
+	return j.Results, nil
+}
+
+func (db JobsDB) DeleteJob(id string) error {
+	return os.Remove(db.Root + "/" + id)
+}
+
+func (db JobsDB) LongListJobs() ([]bip.Job, error) {
+	ids := make([]bip.Job, len(db.JobsDB))
+	x := 0
+	for _, j := range db.JobsDB {
+		ids[x] = j
+		x++
+	}
+	return ids, nil
+}

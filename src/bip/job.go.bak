@@ -1,0 +1,9 @@
+package bip
+
+type Job struct {
+	Id         string
+	Status     byte
+	Workload   string
+	Statistics string
+	Results    []string
+}
