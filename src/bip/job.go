@@ -13,14 +13,6 @@ import (
 
 type JobStatus byte
 
-type JobError struct {
-	Err error
-}
-
-func (err *JobError) Error() string {
-	return err.Err.Error()
-}
-
 const (
 	creating = 0
 	ready = 1
@@ -40,10 +32,19 @@ func (s JobStatus) String() string {
 	return fmt.Sprintf("%d", s)
 }
 
+type JobError struct {
+	Type byte //0 for status type, //1 for id problem, //2 for the persistent stuff
+	Err error
+}
+
+func (err *JobError) Error() string {
+	return err.Err.Error()
+}
+
 type Job struct {
 	root string
 	status JobStatus
-	results []string
+	results map[string]bool
 	id string
 }
 
@@ -56,7 +57,11 @@ func (j *Job) Status() JobStatus {
 }
 
 func (j *Job) Results() []string {
-	return j.results
+	res := make([]string, 0)
+	for  id,_ := range j.results {
+		res = append(res, id)
+	}
+	return res
 }
 
 func (j *Job) Result(r string) ([]byte, error) {
@@ -69,7 +74,7 @@ func (j *Job) Data() ([]byte, error) {
 
 func (j *Job) AddResult(r string, cnt []byte) error {
 	if (j.status != terminating) {
-		return fmt.Errorf("Job should be in state 'processing' or 'terminating'\n")
+		return fmt.Errorf("Job should be in state 'terminating'\n")
 	}
 	if _,err := os.Stat(j.root + "/results/" + r); err != nil	{
 		return fmt.Errorf("Id '%s' already used", r)
@@ -85,7 +90,7 @@ func NewJob(root string, id string, data []byte) (*Job, error){
 	if err = os.MkdirAll(root + "/results", 0700); err != nil {
 		return nil, err
 	}
-	j := &Job{root, 0, make([]string, 0), id}
+	j := &Job{root, 0, make(map[string]bool), id}
 
 	if err = j.setStatus(creating); err != nil {
 		return nil, err
@@ -112,13 +117,13 @@ func ResumeJob(root string, id string) (*Job, error){
 	}
 
 	entries, err:= ioutil.ReadDir(root + "/results");
-	results := make([]string, len(entries))
+	results := make(map[string]bool)
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range entries {
 		if e.IsDir() {
-			results = append(results, e.Name())
+			results[e.Name()] = true
 		}
 	}
 
@@ -157,7 +162,7 @@ func (j *Job) setStatus(to JobStatus) error {
 }
 
 func (j *Job) String() string {
-	return fmt.Sprintf("%s[%s]", j.Id(), j.Status().String())
+	return j.Id() + j.Status().String();
 }
 
 

@@ -35,7 +35,7 @@ func listJobs() {
 func info(id string) {
 	res, err := http.Get("http://" + remote + "/jobs/" + id)
 	if (err != nil) {
-		fmt.Printf("Unable to get job '%s': %s\n", id, err)
+		fmt.Fprintf(os.Stderr, "Unable to get job '%s': %s\n", id, err)
 		os.Exit(-1)
 	}
 	if (res.StatusCode == http.StatusOK) {

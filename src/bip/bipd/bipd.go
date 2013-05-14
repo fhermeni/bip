@@ -9,14 +9,14 @@ import (
 	"bip"
 	"flag"
 	"os"
-	"log"
-)
-
+	"log")
 
 func main() {
 	port := flag.Int("p", 6798, "Listening port")
 	root := flag.String("r", "./bip_data", "Directory where data are stored")
+
 	flag.Parse()
+
 	idx, err := bip.NewIndex(*root)
 	if err != nil {
 		log.Fatalf("Unable to create the index: %s\n", err)
@@ -29,5 +29,4 @@ func main() {
 		log.Fatalf("Unable to start the Rest service: %s\n", err)
 		os.Exit(1)
 	}
-
 }

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
 )
 
 func StartREST(i Index, port int) error {
@@ -23,7 +24,7 @@ func StartREST(i Index, port int) error {
 	r.HandleFunc("/jobs/{j}", makeJobHandler(GetJob)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/data", makeJobHandler(GetData)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/status", makeJobHandler(GetStatus)).Methods("GET")
-	r.HandleFunc("/jobs/{j}/status", makeJobHandler(Commit)).Methods("PUT")
+	r.HandleFunc("/jobs/{j}/status", makeJobHandler(UpdateStatus)).Methods("PUT")
 	r.HandleFunc("/jobs/{j}/results/", makeJobHandler(GetResults)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/results/{r}", makeJobHandler(GetResult)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/results/{r}", makeJobHandler(PutResult)).Methods("PUT")
@@ -35,7 +36,7 @@ var idx Index
 
 func logInternalError(w http.ResponseWriter, userMsg , serverMsg string) {
 	http.Error(w, userMsg, http.StatusInternalServerError)
-	log.Fatalln(serverMsg)
+	log.Println(serverMsg)
 }
 
 func makeJobHandler(fn func(http.ResponseWriter, *http.Request, *Job)) http.HandlerFunc {
@@ -50,17 +51,34 @@ func makeJobHandler(fn func(http.ResponseWriter, *http.Request, *Job)) http.Hand
 	}
 }
 
-func Commit(w http.ResponseWriter, r * http.Request, j *Job) {
-	err := j.Terminated()
+func UpdateStatus(w http.ResponseWriter, r * http.Request, j *Job) {
+	//Get the status
+	st, err := ioutil.ReadAll(r.Body)
+	status := string(st)
+	switch (status) {
+		case "terminating": err = j.Terminating()
+		case "terminated": err = j.Terminated()
+		default:
+			http.Error(w, fmt.Sprintf("non-viable status code: %s", status), http.StatusBadRequest)
+			return
+	}
 	if (err != nil) {
-		http.Error(w,fmt.Sprintf("%s", err), http.StatusNotAcceptable)
+		if _,ok := err.(*os.PathError); ok { //Error on the fs, reported as a 500
+			logInternalError(w, "Error while updating the job status to '" + status + "'", "Unable to update the status of job '" + j.Id() + "': " + err.Error())
+		} else { //Error at the job level, this means the status is not viable
+			http.Error(w, err.Error(), http.StatusConflict)
+		}
 		return
 	}
-	log.Printf("Job '%s' committed\n", j.Id())
+	log.Printf("Job '%s', status set to '%s'\n", j.Id(), status)
 }
 
 func GetData(w http.ResponseWriter, r *http.Request, j *Job) {
-	dta,_ := j.Data()
+	dta,err := j.Data()
+	if (err != nil) {
+		logInternalError(w, fmt.Sprintf("Unable to read the data from the existing job '%s'\n", j.Id()), err.Error())
+		return
+	}
 	w.Write(dta)
 }
 
@@ -97,13 +115,17 @@ func PushJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if (err != nil) {
-		fmt.Fprintf(w, "Unable to create the job: %s\n", err)
-		fmt.Printf("%s\n", err)
+		logInternalError(w, err.Error(), err.Error())
 		return
 	}
 	err = idx.NewJob(jId,cnt)
 	if (err != nil) {
-		http.Error(w, "Unable to add the job: %s\n", http.StatusConflict)
+		if _,ok := err.(*os.PathError); ok { //Error on the fs, reported as a 500
+			logInternalError(w, "Error while creating the job", "Unable to create a job: " + err.Error())
+		} else { //Error at the job level, this means the job already exists
+			http.Error(w, err.Error(), http.StatusConflict)
+		}
+		return
 	}
 	http.Redirect(w, r, "/jobs/" + jId, http.StatusCreated)
 	log.Printf("Job '%s' added\n", jId)
@@ -111,8 +133,20 @@ func PushJob(w http.ResponseWriter, r *http.Request) {
 
 func GetResult(w http.ResponseWriter, r *http.Request, j *Job) {
 	id := mux.Vars(r)["r"]
-	dta,_ := j.Result(id)
-	w.Write(dta)
+	for _,k := range j.Results() {
+		if (k == id) {
+			//The key exists, any error will be due to the fs
+			dta,err := j.Result(id)
+			if (err != nil) {
+				logInternalError(w, fmt.Sprintf("Unable to get the existing result '%s'", id), err.Error())
+				return
+			}
+			w.Write(dta)
+			return
+		}
+	}
+	//The key is not here, 404
+	http.Error(w, fmt.Sprintf("Result '%s' not found", id), http.StatusNotFound)
 }
 
 func PutResult(w http.ResponseWriter, r *http.Request, j *Job) {
@@ -120,7 +154,14 @@ func PutResult(w http.ResponseWriter, r *http.Request, j *Job) {
 	cnt, _ := ioutil.ReadAll(r.Body)
 	err := j.AddResult(res, cnt)
 	if (err != nil) {
-		http.Error(w, fmt.Sprintf("%s",err), http.StatusInternalServerError)
+		if _,ok := err.(*os.PathError); ok { //Error on the fs, reported as a 500
+			logInternalError(w, "Error while storing the result data", err.Error())
+		} else { //Error at the job level, this means the result already exists or the state is invalid
+			//TODO; If state specific, error 403 (forbidden)
+
+			//TODO: If already exists, error Conflict
+			http.Error(w, err.Error(), http.StatusConflict)
+		}
 	}
 }
 
