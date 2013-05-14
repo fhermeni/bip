@@ -32,13 +32,13 @@ func (s JobStatus) String() string {
 	return fmt.Sprintf("%d", s)
 }
 
-type JobError struct {
-	Type byte //0 for status type, //1 for id problem, //2 for the persistent stuff
-	Err error
+type StatusError struct {
+	Expected JobStatus
+	Got JobStatus
 }
 
-func (err *JobError) Error() string {
-	return err.Err.Error()
+func (err *StatusError) Error() string {
+	return fmt.Sprintf("Expected status '%s'. Got '%s'\n", err.Expected.String(), err.Got.String())
 }
 
 type Job struct {
@@ -64,8 +64,12 @@ func (j *Job) Results() []string {
 	return res
 }
 
-func (j *Job) Result(r string) ([]byte, error) {
-	return ioutil.ReadFile(j.root + "/results/" + r)
+func (j *Job) Result(r string) (bool, []byte, error) {
+	if (j.results[r]) {
+		cnt, err := ioutil.ReadFile(j.root + "/results/" + r)
+		return true, cnt, err
+	}
+	return false, nil, nil
 }
 
 func (j *Job) Data() ([]byte, error) {
@@ -148,7 +152,7 @@ func (j *Job) Terminated() error {
 
 func (j *Job) switchStatus(from, to JobStatus) error {
 	if (j.status != from) {
-		return fmt.Errorf("Expect status '%s'. Got '%s'\n", from.String(), to.String())
+		return &StatusError{from, to}
 	}
 	return j.setStatus(to)
 }
