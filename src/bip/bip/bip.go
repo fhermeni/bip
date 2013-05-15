@@ -43,24 +43,45 @@ func Push(args [] string) {
 	}
 }
 
-func Pop(args []string) {
-	req, err := http.NewRequest("PUT", remote + "/jobs/", nil)
-	if (err != nil) {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		os.Exit(-1)
+func Process(args []string) {
+	if (len(args) == 0) {
+		fmt.Println("Process a random job")
+		//Get a random processable job
+		req, err := http.NewRequest("PUT", remote + "/jobs/", nil)
+		if (err != nil) {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(-1)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if (err != nil) {
+			fmt.Fprintf(os.Stderr, "Unable to submit the request: %s\n", err)
+			os.Exit(-1)
+		} else if (res.StatusCode == http.StatusOK) {
+			cnt, _ := ioutil.ReadAll(res.Body)
+			fmt.Printf("%s", cnt)
+		} else if (res.StatusCode == http.StatusNoContent) {
+			os.Exit(3)
+		} else {
+			errorMsgAndQuit(res, 2)
+		}
+	} else if (len(args) == 1) {
+		//process a given job
+		fmt.Printf("Process job %s\n", args[0])
+		req, err := http.NewRequest("PUT", remote + "/jobs/" + args[0] + "/status?s=processing", nil)
+		if (err != nil) {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(-1)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if (err != nil) {
+			fmt.Fprintf(os.Stderr, "Unable to submit the request: %s\n", err)
+			os.Exit(-1)
+		}
+		if (res.StatusCode != http.StatusOK) {
+			errorMsgAndQuit(res, 2)
+		}
 	}
-	res, err := http.DefaultClient.Do(req)
-	if (err != nil) {
-		fmt.Fprintf(os.Stderr, "Unable to submit the request: %s\n", err)
-		os.Exit(-1)
-	} else if (res.StatusCode == http.StatusOK) {
-		cnt, _ := ioutil.ReadAll(res.Body)
-		fmt.Printf("%s", cnt)
-	} else if (res.StatusCode == http.StatusNoContent) {
-		os.Exit(3)
-	} else {
-		errorMsgAndQuit(res, 2)
-	}
+
 }
 
 func errorMsgAndQuit(res *http.Response, exitCode int) {
@@ -156,7 +177,7 @@ func main() {
 	commands = make(map[string]func([]string))
 	commands["list"] = ListJobs
 	commands["put"] = Push
-	commands["pop"] = Pop
+	commands["process"] = Process
 	commands["done"] = Done
 	commands["rput"] = PutResult
 	commands["commit"] = Commit
@@ -193,7 +214,7 @@ func Usage(args []string) {
 	fmt.Fprintf(os.Stderr, "Available commands:\n")
 	fmt.Fprintf(os.Stderr, " list - list the jobs\n")
 	fmt.Fprintf(os.Stderr, " put - declare a new job\n")
-	fmt.Fprintf(os.Stderr, " pop - get a job to process\n")
+	fmt.Fprintf(os.Stderr, " process - process a job\n")
 	fmt.Fprintf(os.Stderr, " done - declare a job processing is done\n")
 	fmt.Fprintf(os.Stderr, " rput - send a result\n")
 	fmt.Fprintf(os.Stderr, " commit - declare a job has been processed and all the results sended\n")
