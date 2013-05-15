@@ -38,7 +38,7 @@ type StatusError struct {
 }
 
 func (err *StatusError) Error() string {
-	return fmt.Sprintf("Expected status '%s'. Got '%s'\n", err.Expected.String(), err.Got.String())
+	return fmt.Sprintf("Expected status updated to '%s'. Got '%s'.", err.Expected.String(), err.Got.String())
 }
 
 type Job struct {
@@ -80,10 +80,14 @@ func (j *Job) AddResult(r string, cnt []byte) error {
 	if (j.status != terminating) {
 		return fmt.Errorf("Job should be in state 'terminating'\n")
 	}
-	if _,err := os.Stat(j.root + "/results/" + r); err != nil	{
-		return fmt.Errorf("Id '%s' already used", r)
+	if (j.results[r]) {
+		return fmt.Errorf("Result id '%s' already used", r)
 	}
-	return ioutil.WriteFile(j.root + "/results/" + r, cnt, 0600)
+	err := ioutil.WriteFile(j.root + "/results/" + r, cnt, 0600)
+	if err == nil {
+		j.results[r] = true
+	}
+	return err
 }
 
 func NewJob(root string, id string, data []byte) (*Job, error){

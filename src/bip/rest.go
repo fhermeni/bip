@@ -9,10 +9,10 @@ import (
 	"github.com/gorilla/mux"
 	"net/http"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 )
 
 var idx Index
@@ -27,11 +27,11 @@ func StartREST(i Index, port int) error {
 	r.HandleFunc("/jobs/{j}/data", makeJobHandler(GetData)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/status", makeJobHandler(GetStatus)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/status", makeJobHandler(UpdateStatus)).Methods("PUT")
-	r.HandleFunc("/jobs/{j}/results/", makeJobHandler(GetResults)).Methods("GET")
+	//r.HandleFunc("/jobs/{j}/results/", makeJobHandler(GetResults)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/results/{r}", makeJobHandler(GetResult)).Methods("GET")
-	r.HandleFunc("/jobs/{j}/results/{r}", makeJobHandler(PutResult)).Methods("PUT")
+	r.HandleFunc("/jobs/{j}/results/", makeJobHandler(PutResult)).Methods("POST")
 	http.Handle("/", r)
-	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
+	return http.ListenAndServe(":" + strconv.Itoa(port), nil)
 }
 
 func logInternalError(w http.ResponseWriter, userMsg , serverMsg string) {
@@ -44,7 +44,7 @@ func makeJobHandler(fn func(http.ResponseWriter, *http.Request, *Job)) http.Hand
 		id := mux.Vars(r)["j"]
 		j, ok := idx.GetJob(id)
 		if !ok {
-			http.Error(w, fmt.Sprintf("Job '%s' not found", id), http.StatusNotFound)
+			http.Error(w, "Job '" + id + "' not found", http.StatusNotFound)
 			return
 		}
 		fn(w, r, j)
@@ -52,32 +52,37 @@ func makeJobHandler(fn func(http.ResponseWriter, *http.Request, *Job)) http.Hand
 }
 
 func UpdateStatus(w http.ResponseWriter, r * http.Request, j *Job) {
-	//Get the status
-	st, err := ioutil.ReadAll(r.Body)
-	status := string(st)
-	switch (status) {
+	r.ParseForm()
+	s := r.Form.Get("s")
+	if s == "" {
+		http.Error(w, "Missing required parameter 's' to specify the new status", http.StatusBadRequest)
+		return
+	}
+	var err error
+	switch (s) {
+		case "processing": err = j.Process()
 		case "terminating": err = j.Terminating()
 		case "terminated": err = j.Terminated()
 		default:
-			http.Error(w, fmt.Sprintf("non-viable status code: %s", status), http.StatusBadRequest)
+			http.Error(w, "non-viable status code: " + s, http.StatusBadRequest)
 			return
 	}
 	if (err != nil) {
 		if _,ok := err.(*os.PathError); ok { //Error on the fs, reported as a 500
-			logInternalError(w, "Error while updating the job status to '" + status + "'",
+			logInternalError(w, "Error while updating the job status to '" + s + "'",
 							 "Unable to update the status of job '" + j.Id() + "': " + err.Error())
 		} else { //Error at the job level, this means the status is not viable
 			http.Error(w, err.Error(), http.StatusConflict)
 		}
 		return
 	}
-	log.Printf("Job '%s', status set to '%s'\n", j.Id(), status)
+	log.Printf("Job '%s', status set to '%s'\n", j.Id(), s)
 }
 
 func GetData(w http.ResponseWriter, r *http.Request, j *Job) {
 	dta,err := j.Data()
 	if (err != nil) {
-		logInternalError(w, fmt.Sprintf("Unable to read the data from the existing job '%s'\n", j.Id()), err.Error())
+		logInternalError(w, "Unable to read the data from the existing job '" + j.Id() + "'", err.Error())
 		return
 	}
 	w.Write(dta)
@@ -137,20 +142,29 @@ func GetResult(w http.ResponseWriter, r *http.Request, j *Job) {
 	id := mux.Vars(r)["r"]
 	ok, cnt, err := j.Result(id)
 	if (!ok) {
-		http.Error(w, fmt.Sprintf("Result '%s' not found", r), http.StatusNotFound)
+		http.Error(w, "Result '" + id + "' not found", http.StatusNotFound)
 		return
 	}
 	if (err != nil) {
-		logInternalError(w, fmt.Sprintf("Unable to get the existing result '%s'", id), err.Error())
+		logInternalError(w, "Unable to get the existing result '" + id + "'", err.Error())
 		return
 	}
 	w.Write(cnt)
 }
 
 func PutResult(w http.ResponseWriter, r *http.Request, j *Job) {
-	res := mux.Vars(r)["r"]
-	cnt, _ := ioutil.ReadAll(r.Body)
-	err := j.AddResult(res, cnt)
+	r.ParseForm()
+	res := r.Form.Get("r")
+	if res == "" {
+		http.Error(w, "Missing required parameter 'r' to declare the result identifier", http.StatusBadRequest)
+		return
+	}
+	cnt, err := ioutil.ReadAll(r.Body)
+	if (err != nil) {
+		logInternalError(w, "Unable to read the result data", err.Error())
+		return
+	}
+	err = j.AddResult(res, cnt)
 	if (err != nil) {
 		if _,ok := err.(*os.PathError); ok { //Error on the fs, reported as a 500
 			logInternalError(w, "Error while storing the result data", err.Error())
@@ -158,6 +172,9 @@ func PutResult(w http.ResponseWriter, r *http.Request, j *Job) {
 			//The job already exists or the current status is incorrect
 			http.Error(w, err.Error(), http.StatusConflict)
 		}
+	}  else {
+		http.Redirect(w, r, "/jobs/" + j.Id() + "/results/" + res, http.StatusCreated)
+		log.Printf("Job '%s': result '%s' added\n", j.Id(), res)
 	}
 }
 
@@ -170,16 +187,13 @@ func GetResults(w http.ResponseWriter, r *http.Request, j *Job) {
 func PopJob(w http.ResponseWriter, r *http.Request) {
 	j, err := idx.ProcessFirstReady()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Error: %s", err), http.StatusInternalServerError)
-		return
+		logInternalError(w, "Error while getting a proccessable job", "Error while getting a proccessable job" + err.Error() + "\n")
+	} else if (j == nil) {
+		http.Error(w, "No jobs are waiting for being processed", http.StatusNoContent)
+	} else {
+		http.Redirect(w, r, "http://" + r.Host + "/jobs/" + j.Id(), http.StatusFound)
+		log.Printf("Job '%s' is processing\n", j.Id())
 	}
-	if (j == nil) {
-		http.Error(w, "No jobs are waiting for being processed", http.StatusGone)
-		return
-	}
-	http.Redirect(w, r, "http://" + r.Host + "/jobs/" + j.Id(), http.StatusOK)
-	log.Printf("Job '%s' is processing\n", j.Id())
-
 }
 
 func GetJobs(w http.ResponseWriter, r *http.Request) {

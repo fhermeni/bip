@@ -12,23 +12,108 @@ import (
 	"io/ioutil"
 )
 var remote string
+var commands map[string]func([]string)
 
-func usage() {
-	fmt.Printf("Usage: location (list|push|pop|get-data|get...)\n")
-}
-
-func listJobs() {
+func ListJobs(args []string) {
 	res, err := http.Get(remote + "/jobs/")
 	if (err != nil) {
-		fmt.Printf("Unable to list the jobs: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Unable to list the jobs: %s\n", err)
 		os.Exit(1)
 	}
 	if (res.StatusCode == http.StatusOK) {
 		cnt, _ := ioutil.ReadAll(res.Body)
 		fmt.Printf("%s", cnt)
 	} else {
-		fmt.Printf("Unable to list the jobs: %s\n", res.Status)
+		errorMsgAndQuit(res, 2)
+	}
+}
+
+func Push(args [] string) {
+	id := args[0]
+	res, err := http.Post(remote + "/jobs/?j=" + id, "", os.Stdin)
+	if (err != nil) {
+		fmt.Fprintf(os.Stderr, "Unable to submit the job: %s\n", err)
+		os.Exit(-1)
+	}
+	if (res.StatusCode == http.StatusConflict) {
+		fmt.Fprintf(os.Stderr, "Job '%s' already exists\n", id)
 		os.Exit(2)
+	} else if (res.StatusCode != http.StatusCreated) {
+		errorMsgAndQuit(res, 2)
+	}
+}
+
+func Pop(args []string) {
+	req, err := http.NewRequest("PUT", remote + "/jobs/", nil)
+	if (err != nil) {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		os.Exit(-1)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if (err != nil) {
+		fmt.Fprintf(os.Stderr, "Unable to submit the request: %s\n", err)
+		os.Exit(-1)
+	} else if (res.StatusCode == http.StatusOK) {
+		cnt, _ := ioutil.ReadAll(res.Body)
+		fmt.Printf("%s", cnt)
+	} else if (res.StatusCode == http.StatusNoContent) {
+		os.Exit(3)
+	} else {
+		errorMsgAndQuit(res, 2)
+	}
+}
+
+func errorMsgAndQuit(res *http.Response, exitCode int) {
+	cnt, _ := ioutil.ReadAll(res.Body)
+	fmt.Fprintf(os.Stderr, "Error '%s': %s", res.Status, cnt)
+	os.Exit(exitCode)
+}
+
+func Commit(args []string) {
+	id := args[0]
+	req, err := http.NewRequest("PUT", remote + "/jobs/" + id + "/status?s=terminated", nil)
+	if (err != nil) {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		os.Exit(-1)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if (err != nil) {
+		fmt.Fprintf(os.Stderr, "Unable to submit the request: %s\n", err)
+		os.Exit(-1)
+	}
+	if (res.StatusCode != http.StatusOK) {
+		errorMsgAndQuit(res, 2)
+	}
+}
+
+func Done(args []string) {
+	id := args[0]
+	req, err := http.NewRequest("PUT", remote + "/jobs/" + id + "/status?s=terminating", nil)
+	if (err != nil) {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		os.Exit(-1)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if (err != nil) {
+		fmt.Fprintf(os.Stderr, "Unable to submit the request: %s\n", err)
+		os.Exit(-1)
+	}
+	if (res.StatusCode != http.StatusOK) {
+		errorMsgAndQuit(res, 2)
+	}
+}
+
+
+func PutResult(args []string) {
+	id := args[0]
+	r := args[1]
+	res, err := http.Post(remote + "/jobs/" + id + "/results/?r=" + r, "", os.Stdin)
+	if (err != nil) {
+		fmt.Fprintf(os.Stderr, "Unable to submit the request: %s\n", err)
+		os.Exit(-1)
+	}
+	if (res.StatusCode != http.StatusCreated) {
+		errorMsgAndQuit(res, 2)
 	}
 }
 
@@ -42,64 +127,81 @@ func get(url string) {
 		cnt, _ := ioutil.ReadAll(res.Body)
 		fmt.Printf("%s", cnt)
 	} else {
-		cnt, _ := ioutil.ReadAll(res.Body)
-		fmt.Fprintf(os.Stderr, "Error '%d': %s\n", res.Status, string(cnt))
-		os.Exit(2)
+		errorMsgAndQuit(res, 2)
 	}
 }
 
-func push(id string) {
-	res, err := http.Post(remote + "/jobs/?j=" + id, "", os.Stdin)
-	if (err != nil) {
-		fmt.Printf("Unable to submit the job: %s\n", err)
-		os.Exit(-1)
-	}
-	if (res.StatusCode == http.StatusConflict) {
-		fmt.Printf("Job '%s' already exists\n", id)
-		os.Exit(2)
-	} else if (res.StatusCode != http.StatusCreated) {
-		cnt, _ := ioutil.ReadAll(res.Body)
-		fmt.Printf("Error '%s'\n%s\n", res.Status, cnt)
-		os.Exit(2)
-	}
+func Data(args []string) {
+	get("/jobs/" + args[0] + "/data")
 }
 
-func pop() {
-	fmt.Fprintf(os.Stderr, "Not implemented\n")
-	os.Exit(1)
+func Status(args []string) {
+	get("/jobs/" + args[0] + "/status")
 }
 
-func commit(id string) {
-	fmt.Fprintf(os.Stderr, "Not implemented\n")
-	os.Exit(1)
+func GetJob(args []string) {
+	get("/jobs/" + args[0])
 }
 
-func addResult(id string, r string) {
-	fmt.Fprintf(os.Stderr, "Not implemented\n")
-	os.Exit(1)
+func Result(args []string) {
+	get("/jobs/" + args[0] + "/results/" + args[1])
+}
+
+func Results(args []string) {
+	get("/jobs/" + args[0] + "/results/")
 }
 
 func main() {
 
-	if len(os.Args) < 3 {
-		usage()
+	commands = make(map[string]func([]string))
+	commands["list"] = ListJobs
+	commands["put"] = Push
+	commands["pop"] = Pop
+	commands["done"] = Done
+	commands["rput"] = PutResult
+	commands["commit"] = Commit
+	commands["get"] = GetJob
+	commands["status"] = Status
+	commands["data"] = Data
+	commands["rlist"] = Results
+	commands["rget"] = Result
+
+	if len(os.Args) < 2 {
+		Usage(os.Args)
 		os.Exit(1)
 	}
 
-	remote = "http://" + os.Args[1]
-	switch(os.Args[2]) {
-		case "list": listJobs()
-		case "info": get("/jobs/" + os.Args[3])
-		case "get-data" : get("/jobs/" + os.Args[3] + "/data")
-		case "get-status" : get("/jobs/" + os.Args[3] + "/status")
-		case "get-result" : get("/jobs/" + os.Args[3] + "/results/" + os.Args[4])
-		case "push" : push(os.Args[3])
-		case "pop" : pop()
-		case "add-result" : addResult(os.Args[3], os.Args[4])
-		case "commit" : commit(os.Args[3])
-		default:
-			fmt.Printf("Unsupported operation '%s'\n", os.Args[2])
-			os.Exit(1)
+	if (os.Args[1] == "help") {
+		Usage(os.Args)
+		os.Exit(0)
+	} else if (len(os.Args) == 2) {
+		Usage(os.Args)
+		os.Exit(1)
 	}
+	remote = "http://" + os.Args[1]
+	fn, ok := commands[os.Args[2]]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Unknown command '%s'. 'bip help' for help\n", os.Args[2])
+		os.Exit(1)
+	}
+	fn(os.Args[3:])
 }
 
+func Usage(args []string) {
+	fmt.Fprintf(os.Stderr, "Usage: 'bip server command'\n")
+	fmt.Fprintf(os.Stderr, "server: the server to connect to 'host:port' format\n")
+	fmt.Fprintf(os.Stderr, "Available commands:\n")
+	fmt.Fprintf(os.Stderr, " list - list the jobs\n")
+	fmt.Fprintf(os.Stderr, " put - declare a new job\n")
+	fmt.Fprintf(os.Stderr, " pop - get a job to process\n")
+	fmt.Fprintf(os.Stderr, " done - declare a job processing is done\n")
+	fmt.Fprintf(os.Stderr, " rput - send a result\n")
+	fmt.Fprintf(os.Stderr, " commit - declare a job has been processed and all the results sended\n")
+	fmt.Fprintf(os.Stderr, " get - get a job summary\n")
+	fmt.Fprintf(os.Stderr, " status - get a job status\n")
+	fmt.Fprintf(os.Stderr, " data - get a job data\n")
+	fmt.Fprintf(os.Stderr, " rlist - get the results identifier of a processed job\n")
+	fmt.Fprintf(os.Stderr, " rget - get a specific results for a processed job\n")
+	fmt.Fprintf(os.Stderr, " help - print this help\n")
+	fmt.Fprintf(os.Stderr, "\n'bip help command' for a complete description\n")
+}
