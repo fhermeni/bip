@@ -18,7 +18,7 @@ func usage() {
 }
 
 func listJobs() {
-	res, err := http.Get("http://" + remote + "/jobs/")
+	res, err := http.Get(remote + "/jobs/")
 	if (err != nil) {
 		fmt.Printf("Unable to list the jobs: %s\n", err)
 		os.Exit(1)
@@ -32,39 +32,24 @@ func listJobs() {
 	}
 }
 
-func info(id string) {
-	res, err := http.Get("http://" + remote + "/jobs/" + id)
+func get(url string) {
+	res, err := http.Get(remote + url)
 	if (err != nil) {
-		fmt.Fprintf(os.Stderr, "Unable to get job '%s': %s\n", id, err)
+		fmt.Fprintf(os.Stderr, "Error while sending the request: %s\n", err)
 		os.Exit(-1)
 	}
 	if (res.StatusCode == http.StatusOK) {
 		cnt, _ := ioutil.ReadAll(res.Body)
 		fmt.Printf("%s", cnt)
 	} else {
-		fmt.Fprintf(os.Stderr, "Unable to get job '%s': %s\n", res.Status)
-		os.Exit(2)
-	}
-}
-
-func data(id string) {
-	res, err := http.Get("http://" + remote + "/jobs/" + id + "/data")
-	if (err != nil) {
-		fmt.Printf("Unable to get job '%s': %s\n", id, err)
-		os.Exit(1)
-	}
-	if (res.StatusCode == http.StatusOK) {
 		cnt, _ := ioutil.ReadAll(res.Body)
-		fmt.Printf("%s", cnt)
-	} else {
-		fmt.Printf("Unable to get job '%s': %s\n", id, res.Status)
+		fmt.Fprintf(os.Stderr, "Error '%d': %s\n", res.Status, string(cnt))
 		os.Exit(2)
 	}
 }
-
 
 func push(id string) {
-	res, err := http.Post("http://" + remote + "/jobs/" + id, "", os.Stdin)
+	res, err := http.Post(remote + "/jobs/?j=" + id, "", os.Stdin)
 	if (err != nil) {
 		fmt.Printf("Unable to submit the job: %s\n", err)
 		os.Exit(-1)
@@ -74,7 +59,7 @@ func push(id string) {
 		os.Exit(2)
 	} else if (res.StatusCode != http.StatusCreated) {
 		cnt, _ := ioutil.ReadAll(res.Body)
-		fmt.Printf("Error while pushing job '%s': %s\n%s\n", id, res.Status, cnt)
+		fmt.Printf("Error '%s'\n%s\n", res.Status, cnt)
 		os.Exit(2)
 	}
 }
@@ -101,18 +86,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	remote = os.Args[1]
+	remote = "http://" + os.Args[1]
 	switch(os.Args[2]) {
 		case "list": listJobs()
-		case "info": info(os.Args[3])
-		case "get-data" : data(os.Args[3])
+		case "info": get("/jobs/" + os.Args[3])
+		case "get-data" : get("/jobs/" + os.Args[3] + "/data")
+		case "get-status" : get("/jobs/" + os.Args[3] + "/status")
+		case "get-result" : get("/jobs/" + os.Args[3] + "/results/" + os.Args[4])
 		case "push" : push(os.Args[3])
 		case "pop" : pop()
 		case "add-result" : addResult(os.Args[3], os.Args[4])
 		case "commit" : commit(os.Args[3])
-	default:
-		fmt.Printf("Unsupported operation '%s'\n", os.Args[2])
-		os.Exit(1)
+		default:
+			fmt.Printf("Unsupported operation '%s'\n", os.Args[2])
+			os.Exit(1)
 	}
 }
 

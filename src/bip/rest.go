@@ -15,12 +15,14 @@ import (
 	"os"
 )
 
+var idx Index
+
 func StartREST(i Index, port int) error {
 	idx = i
 	r := mux.NewRouter()
 	r.HandleFunc("/jobs/", GetJobs).Methods("GET")
 	r.HandleFunc("/jobs/", PopJob).Methods("PUT")
-	r.HandleFunc("/jobs/{j}", PushJob).Methods("POST")
+	r.HandleFunc("/jobs/", PushJob).Methods("POST")
 	r.HandleFunc("/jobs/{j}", makeJobHandler(GetJob)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/data", makeJobHandler(GetData)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/status", makeJobHandler(GetStatus)).Methods("GET")
@@ -31,8 +33,6 @@ func StartREST(i Index, port int) error {
 	http.Handle("/", r)
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
-
-var idx Index
 
 func logInternalError(w http.ResponseWriter, userMsg , serverMsg string) {
 	http.Error(w, userMsg, http.StatusInternalServerError)
@@ -64,7 +64,8 @@ func UpdateStatus(w http.ResponseWriter, r * http.Request, j *Job) {
 	}
 	if (err != nil) {
 		if _,ok := err.(*os.PathError); ok { //Error on the fs, reported as a 500
-			logInternalError(w, "Error while updating the job status to '" + status + "'", "Unable to update the status of job '" + j.Id() + "': " + err.Error())
+			logInternalError(w, "Error while updating the job status to '" + status + "'",
+							 "Unable to update the status of job '" + j.Id() + "': " + err.Error())
 		} else { //Error at the job level, this means the status is not viable
 			http.Error(w, err.Error(), http.StatusConflict)
 		}
@@ -84,7 +85,7 @@ func GetData(w http.ResponseWriter, r *http.Request, j *Job) {
 
 func GetStatus(w http.ResponseWriter, r *http.Request, j *Job) {
 	dta := j.Status()
-	w.Write([]byte{byte(dta)})
+	w.Write([]byte(dta.String()))
 }
 
 
@@ -108,12 +109,13 @@ func mapResults(j *Job, prefix string) map[string]string {
 }
 
 func PushJob(w http.ResponseWriter, r *http.Request) {
-	jId := mux.Vars(r)["j"]
-	cnt, err := ioutil.ReadAll(r.Body)
-	if len(cnt) == 0 {
-		http.Error(w, "Missing data", http.StatusBadRequest)
+	r.ParseForm()
+	jId := r.Form.Get("j")
+	if jId == "" {
+		http.Error(w, "Missing required parameter 'j' to declare the job identifier", http.StatusBadRequest)
 		return
 	}
+	cnt, err := ioutil.ReadAll(r.Body)
 	if (err != nil) {
 		logInternalError(w, err.Error(), err.Error())
 		return
