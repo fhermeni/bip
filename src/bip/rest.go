@@ -27,7 +27,7 @@ func StartREST(i Index, port int) error {
 	r.HandleFunc("/jobs/{j}/data", makeJobHandler(GetData)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/status", makeJobHandler(GetStatus)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/status", makeJobHandler(UpdateStatus)).Methods("PUT")
-	//r.HandleFunc("/jobs/{j}/results/", makeJobHandler(GetResults)).Methods("GET")
+	r.HandleFunc("/jobs/{j}/results/", makeJobHandler(GetResults)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/results/{r}", makeJobHandler(GetResult)).Methods("GET")
 	r.HandleFunc("/jobs/{j}/results/", makeJobHandler(PutResult)).Methods("POST")
 	http.Handle("/", r)
